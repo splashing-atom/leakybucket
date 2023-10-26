@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Clever/leakybucket"
+	"github.com/splashing-atom/leakybucket"
 )
 
 type bucket struct {

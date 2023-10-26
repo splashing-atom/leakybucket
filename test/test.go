@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Clever/leakybucket"
+	"github.com/splashing-atom/leakybucket"
 
 	"github.com/stretchr/testify/require"
 )

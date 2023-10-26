@@ -3,7 +3,7 @@ package memory
 import (
 	"testing"
 
-	"github.com/Clever/leakybucket/test"
+	"github.com/splashing-atom/leakybucket/test"
 )
 
 func TestCreate(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Clever/leakybucket/test"
+	"github.com/splashing-atom/leakybucket/test"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"

@@ -25,7 +25,7 @@ sleep 2
 export AWS_DYNAMO_ENDPOINT=http://localhost:8002
 
 # run our tests
-go test -v github.com/Clever/leakybucket/dynamodb
+go test -v github.com/splashing-atom/leakybucket/dynamodb
 err=$?
 
 # kill all child processes to clean up

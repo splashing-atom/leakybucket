@@ -1,8 +1,8 @@
 package redis
 
 import (
-	"github.com/Clever/leakybucket"
 	"github.com/garyburd/redigo/redis"
+	"github.com/splashing-atom/leakybucket"
 	"time"
 )
 

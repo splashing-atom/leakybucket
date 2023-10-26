@@ -1,7 +1,7 @@
 /*
 Package dynamodb provides a leaky bucket implementation backed by AWS DynamoDB
 
-For additional details please refer to: https://github.com/Clever/leakybucket/tree/master/dynamodb
+For additional details please refer to: https://github.com/splashing-atom/leakybucket/tree/master/dynamodb
 */
 package dynamodb
 
@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Clever/leakybucket"
+	"github.com/splashing-atom/leakybucket"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -167,7 +167,9 @@ func min(a, b uint) uint {
 }
 
 // dialTimeoutRetrier classifies errors from DynamoDB API in the form of
-//   Post https://dynamodb.{region}.amazonaws.com: dial tcp x.x.x.x: i/o timeout
+//
+//	Post https://dynamodb.{region}.amazonaws.com: dial tcp x.x.x.x: i/o timeout
+//
 // as retryable errors. This classifier is only used in `New` as we don't want to override the
 // consumer's configuration during normal operation
 type dialTimeoutRetrier struct{}

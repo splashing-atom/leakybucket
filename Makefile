@@ -3,7 +3,7 @@ include golang.mk
 
 .PHONY: test $(PKGS) dynamodb-test
 SHELL := /bin/bash
-PKG := github.com/Clever/leakybucket
+PKG := github.com/splashing-atom/leakybucket
 PKGS := $(shell go list ./... | grep -v /dynamodb | grep -v /vendor)
 $(eval $(call golang-version-check,1.13))
 

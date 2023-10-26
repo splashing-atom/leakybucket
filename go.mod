@@ -1,4 +1,4 @@
-module github.com/Clever/leakybucket
+module github.com/splashing-atom/leakybucket
 
 go 1.13
 
