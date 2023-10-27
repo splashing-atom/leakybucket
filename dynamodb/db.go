@@ -112,10 +112,13 @@ func (db bucketDB) bucket(ctx context.Context, name string) (*ddbBucket, error) 
 		TableName:      aws.String(db.tableName),
 		ConsistentRead: aws.Bool(true),
 	})
-	if rnfErr(err) || len(res.Item) == 0 {
+	if rnfErr(err) {
 		return nil, errBucketNotFound
 	} else if err != nil {
 		return nil, err
+	}
+	if len(res.Item) == 0 {
+		return nil, errBucketNotFound
 	}
 
 	return decodeBucket(res.Item)
