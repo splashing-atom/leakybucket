@@ -1,15 +1,16 @@
 package dynamodb
 
 import (
+	"context"
 	"errors"
-	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
 var (
@@ -18,7 +19,7 @@ var (
 )
 
 type bucketDB struct {
-	ddb       dynamodbiface.DynamoDBAPI
+	ddb       *dynamodb.Client
 	tableName string
 	ttl       time.Duration
 }
@@ -27,20 +28,20 @@ type ddbBucketStatePrimaryKey struct {
 	Name string `dynamodbav:"name"`
 }
 
-func (d ddbBucketStatePrimaryKey) AttributeDefinitions() []*dynamodb.AttributeDefinition {
-	return []*dynamodb.AttributeDefinition{
+func (d ddbBucketStatePrimaryKey) AttributeDefinitions() []types.AttributeDefinition {
+	return []types.AttributeDefinition{
 		{
 			AttributeName: aws.String("name"),
-			AttributeType: aws.String(dynamodb.ScalarAttributeTypeS),
+			AttributeType: types.ScalarAttributeTypeS,
 		},
 	}
 }
 
-func (d ddbBucketStatePrimaryKey) KeySchema() []*dynamodb.KeySchemaElement {
-	return []*dynamodb.KeySchemaElement{
+func (d ddbBucketStatePrimaryKey) KeySchema() []types.KeySchemaElement {
+	return []types.KeySchemaElement{
 		{
 			AttributeName: aws.String("name"),
-			KeyType:       aws.String(dynamodb.KeyTypeHash),
+			KeyType:       types.KeyTypeHash,
 		},
 	}
 }
@@ -78,16 +79,16 @@ func newDDBBucket(name string, expiresIn time.Duration, ttl time.Duration) ddbBu
 	}
 }
 
-func decodeBucket(b map[string]*dynamodb.AttributeValue) (*ddbBucket, error) {
+func decodeBucket(b map[string]types.AttributeValue) (*ddbBucket, error) {
 	var bs ddbBucket
-	if err := dynamodbattribute.UnmarshalMap(b, &bs); err != nil {
+	if err := attributevalue.UnmarshalMap(b, &bs); err != nil {
 		return nil, err
 	}
 	return &bs, nil
 }
 
-func encodeBucket(b ddbBucket) (map[string]*dynamodb.AttributeValue, error) {
-	return dynamodbattribute.MarshalMap(b)
+func encodeBucket(b ddbBucket) (map[string]types.AttributeValue, error) {
+	return attributevalue.MarshalMap(b)
 
 }
 
@@ -95,23 +96,23 @@ func (b *ddbBucket) expired() bool {
 	return time.Now().After(b.Expiration)
 }
 
-func (db bucketDB) key(name string) (map[string]*dynamodb.AttributeValue, error) {
-	return dynamodbattribute.MarshalMap(ddbBucketStatePrimaryKey{
-		Name: string(name),
+func (db bucketDB) key(name string) (map[string]types.AttributeValue, error) {
+	return attributevalue.MarshalMap(ddbBucketStatePrimaryKey{
+		Name: name,
 	})
 }
 
-func (db bucketDB) bucket(name string) (*ddbBucket, error) {
+func (db bucketDB) bucket(ctx context.Context, name string) (*ddbBucket, error) {
 	key, err := db.key(name)
 	if err != nil {
 		return nil, err
 	}
-	res, err := db.ddb.GetItem(&dynamodb.GetItemInput{
+	res, err := db.ddb.GetItem(ctx, &dynamodb.GetItemInput{
 		Key:            key,
 		TableName:      aws.String(db.tableName),
 		ConsistentRead: aws.Bool(true),
 	})
-	if awsErr(err, dynamodb.ErrCodeResourceNotFoundException) || len(res.Item) == 0 {
+	if rnfErr(err) || len(res.Item) == 0 {
 		return nil, errBucketNotFound
 	} else if err != nil {
 		return nil, err
@@ -120,8 +121,8 @@ func (db bucketDB) bucket(name string) (*ddbBucket, error) {
 	return decodeBucket(res.Item)
 }
 
-func (db bucketDB) findOrCreateBucket(name string, expiresIn time.Duration) (*ddbBucket, error) {
-	dbBucket, err := db.bucket(name)
+func (db bucketDB) findOrCreateBucket(ctx context.Context, name string, expiresIn time.Duration) (*ddbBucket, error) {
+	dbBucket, err := db.bucket(ctx, name)
 	if err == nil {
 		return dbBucket, nil
 	} else if err != errBucketNotFound {
@@ -134,51 +135,52 @@ func (db bucketDB) findOrCreateBucket(name string, expiresIn time.Duration) (*dd
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.ddb.PutItem(&dynamodb.PutItemInput{
+	_, err = db.ddb.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(db.tableName),
 		Item:      data,
-		ExpressionAttributeNames: map[string]*string{
-			"#N": aws.String("name"),
+		ExpressionAttributeNames: map[string]string{
+			"#N": "name",
 		},
 		ConditionExpression: aws.String("attribute_not_exists(#N)"),
 	})
 	if err != nil {
-		if !awsErr(err, dynamodb.ErrCodeConditionalCheckFailedException) {
+		if !ccfErr(err) {
 			return nil, err
 		}
 		// insane edge case because we know we can have multiple consumers
 		// for existing buckets simply re-fetch
-		return db.bucket(bucket.Name)
+		return db.bucket(ctx, bucket.Name)
 	}
 
 	return &bucket, err
 }
 
-func (db bucketDB) incrementBucketValue(name string, amount, capacity uint) (*ddbBucket, error) {
+func (db bucketDB) incrementBucketValue(ctx context.Context, name string, amount, capacity uint) (*ddbBucket, error) {
 	key, err := db.key(name)
 	if err != nil {
 		return nil, err
 	}
-	res, err := db.ddb.UpdateItem(&dynamodb.UpdateItemInput{
-		Key:       key,
-		TableName: aws.String(db.tableName),
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":a": {
-				N: aws.String(fmt.Sprintf("%d", amount)),
-			},
-			":c": {
-				N: aws.String(fmt.Sprintf("%d", capacity)),
-			},
-		},
-		ExpressionAttributeNames: map[string]*string{
-			"#V": aws.String("value"),
-		},
-		ReturnValues:        aws.String(dynamodb.ReturnValueAllNew),
-		UpdateExpression:    aws.String("SET #V = #V + :a"),
-		ConditionExpression: aws.String("#V <= :c"),
+
+	update := expression.Add(expression.Name("value"), expression.Value(amount))
+	keyEx := expression.Key("value").LessThanEqual(expression.Value(capacity))
+	expr, err := expression.NewBuilder().WithUpdate(update).
+		WithKeyCondition(keyEx).
+		Build()
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := db.ddb.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		Key:                       key,
+		TableName:                 aws.String(db.tableName),
+		ExpressionAttributeValues: expr.Values(),
+		ExpressionAttributeNames:  expr.Names(),
+		ReturnValues:              types.ReturnValueAllNew,
+		UpdateExpression:          expr.Update(),
+		ConditionExpression:       expr.Condition(),
 	})
 	if err != nil {
-		if awsErr(err, dynamodb.ErrCodeConditionalCheckFailedException) {
+		if ccfErr(err) {
 			return nil, errBucketCapacityExceeded
 		}
 		return nil, err
@@ -187,7 +189,7 @@ func (db bucketDB) incrementBucketValue(name string, amount, capacity uint) (*dd
 }
 
 // resetBucket will reset the bucket's value to 0 iff the versions match
-func (db bucketDB) resetBucket(bucket ddbBucket, expiresIn time.Duration) (*ddbBucket, error) {
+func (db bucketDB) resetBucket(ctx context.Context, bucket ddbBucket, expiresIn time.Duration) (*ddbBucket, error) {
 	// dbMaxVersion is an arbitrary constant to prevent the version field from overflowing
 	var dbMaxVersion uint = 2 << 28
 	newVersion := bucket.Version + 1
@@ -200,37 +202,42 @@ func (db bucketDB) resetBucket(bucket ddbBucket, expiresIn time.Duration) (*ddbB
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.ddb.PutItem(&dynamodb.PutItemInput{
-		TableName: aws.String(db.tableName),
-		Item:      data,
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":v": {
-				N: aws.String(fmt.Sprintf("%0d", bucket.Version)),
-			},
-		},
-		ConditionExpression: aws.String("version = :v"),
+
+	keyEx := expression.Key("version").Equal(expression.Value(bucket.Version))
+	expr, err := expression.NewBuilder().WithKeyCondition(keyEx).Build()
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.ddb.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:                 aws.String(db.tableName),
+		Item:                      data,
+		ExpressionAttributeValues: expr.Values(),
+		ConditionExpression:       expr.Condition(),
 	})
 	if err != nil {
-		if !awsErr(err, dynamodb.ErrCodeConditionalCheckFailedException) {
+		if !ccfErr(err) {
 			return nil, err
 		}
 		// A conditional check failing means another consumer of this bucket reset at the same time.
 		// We can simply swallow the error and re-fetch the bucket
-		return db.bucket(bucket.Name)
+		return db.bucket(ctx, bucket.Name)
 	}
 	return &updatedBucket, nil
 }
 
-func awsErr(err error, codes ...string) bool {
-	if err == nil {
-		return false
+func ccfErr(err error) bool {
+	var ccf *types.ConditionalCheckFailedException
+	if errors.As(err, &ccf) {
+		return true
 	}
-	if aerr, ok := err.(awserr.Error); ok {
-		for _, code := range codes {
-			if code == aerr.Code() {
-				return true
-			}
-		}
+	return false
+}
+
+func rnfErr(err error) bool {
+	var ccf *types.ResourceNotFoundException
+	if errors.As(err, &ccf) {
+		return true
 	}
 	return false
 }

@@ -6,15 +6,15 @@ For additional details please refer to: https://github.com/splashing-atom/leakyb
 package dynamodb
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/splashing-atom/leakybucket"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/eapache/go-resiliency/retrier"
 )
 
@@ -50,12 +50,12 @@ func (b *bucket) Add(amount uint) (leakybucket.BucketState, error) {
 	defer b.mutex.Unlock()
 	// Storage.Create guarantees the DB Bucket with a configured TTL. For long running executions it
 	// is possible old buckets will get deleted, so we use `findOrCreate` rather than `bucket`
-	dbBucket, err := b.db.findOrCreateBucket(b.name, b.rate)
+	dbBucket, err := b.db.findOrCreateBucket(context.TODO(), b.name, b.rate)
 	if err != nil {
 		return b.state(), err
 	}
 	if dbBucket.expired() {
-		dbBucket, err = b.db.resetBucket(*dbBucket, b.rate)
+		dbBucket, err = b.db.resetBucket(context.TODO(), *dbBucket, b.rate)
 		if err != nil {
 			return b.state(), err
 		}
@@ -66,7 +66,7 @@ func (b *bucket) Add(amount uint) (leakybucket.BucketState, error) {
 	if amount > b.remaining {
 		return b.state(), leakybucket.ErrorFull
 	}
-	updatedDBBucket, err := b.db.incrementBucketValue(b.name, amount, b.capacity)
+	updatedDBBucket, err := b.db.incrementBucketValue(context.TODO(), b.name, amount, b.capacity)
 	if err != nil {
 		if err == errBucketCapacityExceeded {
 			return b.state(), leakybucket.ErrorFull
@@ -105,7 +105,7 @@ func (s *Storage) Create(name string, capacity uint, rate time.Duration) (leakyb
 		rate:      rate,
 		db:        s.db,
 	}
-	dbBucket, err := s.db.findOrCreateBucket(name, rate)
+	dbBucket, err := s.db.findOrCreateBucket(context.TODO(), name, rate)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +125,7 @@ func (s *Storage) Create(name string, capacity uint, rate time.Duration) (leakyb
 // New initializes the a new bucket storage factory backed by dynamodb. We recommend the session is
 // configured with minimal or no retries for a real time use case. Additionally, we recommend
 // itemTTL >>> any rate provided in Storage.Create
-func New(tableName string, s *session.Session, itemTTL time.Duration) (*Storage, error) {
-	ddb := dynamodb.New(s)
+func New(ctx context.Context, tableName string, ddb *dynamodb.Client, itemTTL time.Duration) (*Storage, error) {
 
 	db := bucketDB{
 		ddb:       ddb,
@@ -138,7 +137,7 @@ func New(tableName string, s *session.Session, itemTTL time.Duration) (*Storage,
 	// but guarantee we retry dial timeouts to be tolerant to a networking blip
 	r := retrier.New(retrier.ExponentialBackoff(5, 1*time.Second), dialTimeoutRetrier{})
 	err := r.Run(func() error {
-		_, err := ddb.DescribeTable(&dynamodb.DescribeTableInput{
+		_, err := ddb.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 			TableName: aws.String(tableName),
 		})
 		return err

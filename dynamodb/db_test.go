@@ -1,32 +1,37 @@
 package dynamodb
 
 import (
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"context"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"time"
 )
 
 func createTable(db bucketDB) error {
 	input := &dynamodb.CreateTableInput{
 		TableName:            aws.String(db.tableName),
-		BillingMode:          aws.String(dynamodb.BillingModePayPerRequest),
+		BillingMode:          types.BillingModePayPerRequest,
 		AttributeDefinitions: ddbBucketStatePrimaryKey{}.AttributeDefinitions(),
 		KeySchema:            ddbBucketStatePrimaryKey{}.KeySchema(),
 	}
-	if _, err := db.ddb.CreateTable(input); err != nil {
+	if _, err := db.ddb.CreateTable(context.Background(), input); err != nil {
 		return err
 	}
-	return db.ddb.WaitUntilTableExists(&dynamodb.DescribeTableInput{
-		TableName: aws.String(db.tableName),
-	})
+
+	waiter := dynamodb.NewTableExistsWaiter(db.ddb)
+	return waiter.Wait(context.Background(), &dynamodb.DescribeTableInput{
+		TableName: aws.String(db.tableName)}, 5*time.Minute)
 }
 
 func deleteTable(db bucketDB) error {
-	if _, err := db.ddb.DeleteTable(&dynamodb.DeleteTableInput{
+	if _, err := db.ddb.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{
 		TableName: aws.String(db.tableName),
 	}); err != nil {
 		return err
 	}
-	return db.ddb.WaitUntilTableNotExists(&dynamodb.DescribeTableInput{
-		TableName: aws.String(db.tableName),
-	})
+
+	waiter := dynamodb.NewTableNotExistsWaiter(db.ddb)
+	return waiter.Wait(context.Background(), &dynamodb.DescribeTableInput{
+		TableName: aws.String(db.tableName)}, 5*time.Minute)
 }

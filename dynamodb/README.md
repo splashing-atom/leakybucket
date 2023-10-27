@@ -43,8 +43,8 @@ import (
 
     leakybucketDynamoDB "github.com/splashing-atom/leakybucket/dynamodb"
 
-    "github.com/aws/aws-sdk-go/aws"
-    "github.com/aws/aws-sdk-go/aws/session"
+    
+    
 )
 
 func main() {

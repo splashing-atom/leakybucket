@@ -1,16 +1,17 @@
 package dynamodb
 
 import (
+	"context"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/splashing-atom/leakybucket/test"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 
 	"github.com/stretchr/testify/require"
 )
@@ -25,23 +26,40 @@ func testRequiredEnv(t *testing.T, key string) string {
 	return val
 }
 
+func testConfig(t *testing.T) *aws.Config {
+	customResolver := aws.EndpointResolverWithOptionsFunc(
+		func(service, region string, opts ...interface{}) (aws.Endpoint, error) {
+			return aws.Endpoint{
+				PartitionID:   "aws",
+				URL:           testRequiredEnv(t, "AWS_DYNAMO_ENDPOINT"),
+				SigningRegion: region,
+			}, nil
+		})
+
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("us-east-1"),
+		config.WithEndpointResolverWithOptions(customResolver),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("foo", "foo", "foo")),
+	)
+	require.NoError(t, err)
+	return &awsCfg
+}
+
 func testStorage(t *testing.T) *Storage {
 	table := "test-table"
-	s, err := session.NewSession(&aws.Config{
-		Region:      aws.String("doesntmatter"),
-		Endpoint:    aws.String(testRequiredEnv(t, "AWS_DYNAMO_ENDPOINT")),
-		Credentials: credentials.NewStaticCredentials("id", "secret", "token"),
-	})
-	ddb := dynamodb.New(s)
+
+	awsCfg := testConfig(t)
+
+	ddb := dynamodb.NewFromConfig(*awsCfg)
 	db := bucketDB{
 		ddb:       ddb,
 		tableName: table,
 	}
 	// ensure we're working with a clean table
 	deleteTable(db)
-	err = createTable(db)
+	err := createTable(db)
 	require.NoError(t, err)
-	storage, err := New(table, s, 10*time.Second)
+	storage, err := New(context.Background(), table, ddb, 10*time.Second)
 	require.NoError(t, err)
 
 	return storage
@@ -73,11 +91,9 @@ func TestBucketInstanceConsistencyTest(t *testing.T) {
 
 // package specific tests
 func TestNoTable(t *testing.T) {
-	session, err := session.NewSession(&aws.Config{
-		Endpoint: aws.String(os.Getenv("AWS_DYNAMO_ENDPOINT")),
-	})
-	require.NoError(t, err)
-	_, err = New("doesntmatter", session, 10*time.Second)
+	awsCfg := testConfig(t)
+	ddb := dynamodb.NewFromConfig(*awsCfg)
+	_, err := New(context.Background(), "doesntmatter", ddb, 10*time.Second)
 	require.Error(t, err)
 }
 
@@ -89,9 +105,9 @@ func TestBucketTTL(t *testing.T) {
 	s := testStorage(t)
 	s.db.ttl = time.Second
 
-	_, err := s.db.ddb.UpdateTimeToLive(&dynamodb.UpdateTimeToLiveInput{
+	_, err := s.db.ddb.UpdateTimeToLive(context.Background(), &dynamodb.UpdateTimeToLiveInput{
 		TableName: aws.String(s.db.tableName),
-		TimeToLiveSpecification: &dynamodb.TimeToLiveSpecification{
+		TimeToLiveSpecification: &types.TimeToLiveSpecification{
 			AttributeName: aws.String("_ttl"),
 			Enabled:       aws.Bool(true),
 		},
@@ -103,7 +119,7 @@ func TestBucketTTL(t *testing.T) {
 	require.NoError(t, err)
 
 	time.Sleep(s.db.ttl + 10*time.Second)
-	dbBucket, err := s.db.bucket("testbucket")
+	dbBucket, err := s.db.bucket(context.Background(), "testbucket")
 	if err == nil {
 		t.Log("bucket not yet deleted. TTL: ", dbBucket.TTL)
 		require.NotNil(t, dbBucket)
